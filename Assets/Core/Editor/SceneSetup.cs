@@ -92,8 +92,9 @@ namespace SeaVibe.Editor
             }
 
             // Nastavíme loď tak, aby byla větší (přibližně 20 metrů dlouhá)
+            // U lodí z internetu nevíme, jestli míří po ose Z nebo X, takže vezmeme tu delší stranu.
             float targetLength = 20f; 
-            float currentLength = bounds.size.z; 
+            float currentLength = Mathf.Max(bounds.size.x, bounds.size.z); 
             float scaleMultiplier = targetLength / currentLength;
             boatObj.transform.localScale = new Vector3(scaleMultiplier, scaleMultiplier, scaleMultiplier);
             
@@ -122,17 +123,13 @@ namespace SeaVibe.Editor
             if (!hasHull) hullBounds = bounds; // Fallback
             // --- KONEC VÝPOČTU TRUPU ---
 
-            // BoxCollider přizpůsobíme tak, aby tvořil jen PALUBU lodi (nesmí obalovat stěžeň!)
-            // Jinak by se hráč spawnul uvnitř něj a fyzika by explodovala.
+            // BoxCollider přizpůsobíme tak, aby obaloval přesně trup lodi (nesmí obalovat stěžeň!)
+            // Jinak by se loď mohla převracet nebo by hráč chodil po vzduchu.
             BoxCollider col = boatObj.GetComponent<BoxCollider>();
             if (col == null) col = boatObj.AddComponent<BoxCollider>();
             
-            float bottomY = bounds.center.y - extents.y;
-            float deckHeight = extents.y * 0.25f; // Trup tvoří zhruba 25% celkové výšky
-            float deckCenterY = bottomY + (deckHeight / 2f);
-            
-            col.center = boatObj.transform.InverseTransformPoint(new Vector3(bounds.center.x, deckCenterY, bounds.center.z));
-            col.size = boatObj.transform.InverseTransformVector(new Vector3(extents.x * 2f, deckHeight, extents.z * 2f));
+            col.center = boatObj.transform.InverseTransformPoint(hullBounds.center);
+            col.size = boatObj.transform.InverseTransformVector(hullBounds.size);
 
             // 3a. Nastavení fyziky lodě (Rigidbody a Vztlak)
             Rigidbody rb = boatObj.GetComponent<Rigidbody>();
@@ -147,20 +144,22 @@ namespace SeaVibe.Editor
             
             Transform[] newFloaters = new Transform[4];
             
-            // Nastavíme 4 rohy bójí (World Space)
-            float xOffset = extents.x * 0.8f;
-            float zOffset = extents.z * 0.8f;
+            // Nastavíme 4 rohy bójí (World Space) podle trupu
+            float xOffset = hullBounds.extents.x * 0.8f;
+            float zOffset = hullBounds.extents.z * 0.8f;
             
             // Posuneme bóje do 40% výšky trupu, aby se loď realisticky zanořila do vody
-            // a nevznášela se jako korková zátka
-            float waterlineY = bottomY + (deckHeight * 0.4f); 
+            // a nevznášela se jako korková zátka (nebo se nepotopila)
+            float hullBottomY = hullBounds.min.y;
+            float hullHeight = hullBounds.size.y;
+            float waterlineY = hullBottomY + (hullHeight * 0.4f); 
 
             Vector3[] floaterPositions = new Vector3[]
             {
-                new Vector3(bounds.center.x - xOffset, waterlineY, bounds.center.z + zOffset),
-                new Vector3(bounds.center.x + xOffset, waterlineY, bounds.center.z + zOffset),
-                new Vector3(bounds.center.x - xOffset, waterlineY, bounds.center.z - zOffset),
-                new Vector3(bounds.center.x + xOffset, waterlineY, bounds.center.z - zOffset)
+                new Vector3(hullBounds.center.x - xOffset, waterlineY, hullBounds.center.z + zOffset),
+                new Vector3(hullBounds.center.x + xOffset, waterlineY, hullBounds.center.z + zOffset),
+                new Vector3(hullBounds.center.x - xOffset, waterlineY, hullBounds.center.z - zOffset),
+                new Vector3(hullBounds.center.x + xOffset, waterlineY, hullBounds.center.z - zOffset)
             };
 
             for (int i = 0; i < 4; i++)
@@ -252,7 +251,8 @@ namespace SeaVibe.Editor
 
             // 7. Vytvoření Hráče
             GameObject playerObj = new GameObject("Player");
-            playerObj.transform.position = new Vector3(16.16f, 13.81f, 0f); 
+            // Umístíme hráče do středu lodi, trochu výš nad palubu, aby spadl bezpečně na ni
+            playerObj.transform.position = new Vector3(0f, bounds.center.y + (bounds.size.y * 0.5f), 0f); 
             
             FirstPersonController fpController = playerObj.AddComponent<FirstPersonController>();
             Rigidbody playerRb = playerObj.GetComponent<Rigidbody>();
