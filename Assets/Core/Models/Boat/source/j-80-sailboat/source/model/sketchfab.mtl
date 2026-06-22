@@ -1,0 +1,29 @@
+# MTL written from C:\Users\dlawlor\Desktop\sketchfab.obj
+newmtl Clear_Glass
+Kd 0.6 0.6 0.6
+Ns 4096
+d 1
+illum 2
+Ka 0 0 0
+Ks 0 0 0
+newmtl Dark_Glass
+Kd 0.6 0.6 0.6
+Ns 4096
+d 1
+illum 2
+Ka 0 0 0
+Ks 0 0 0
+newmtl J_04580_base
+Kd 0.6 0.6 0.6
+Ns 4096
+d 1
+illum 2
+Ka 0 0 0
+Ks 0 0 0
+newmtl J_04580_sails
+Kd 0.6 0.6 0.6
+Ns 4096
+d 1
+illum 2
+Ka 0 0 0
+Ks 0 0 0

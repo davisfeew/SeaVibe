@@ -48,23 +48,26 @@ namespace SeaVibe.Editor
             seaVisual.layer = waterLayer;
 
             // 3. Vytvoření lodi
-            GameObject boatPrefab = AssetDatabase.LoadAssetAtPath<GameObject>("Assets/Core/Models/Boat/source/Boat A/Boat A.obj");
-            GameObject boatObj;
+            GameObject boatObj = GameObject.Find("Boat");
             
-            if (boatPrefab != null)
+            if (boatObj == null)
             {
-                boatObj = (GameObject)PrefabUtility.InstantiatePrefab(boatPrefab);
-                boatObj.name = "Boat";
-                boatObj.transform.position = new Vector3(0, 0, 0);
-                // Velikost a pozice kolizního boxu záleží na tom, jak je model v exportu velký
-                boatObj.AddComponent<BoxCollider>();
-            }
-            else
-            {
-                boatObj = GameObject.CreatePrimitive(PrimitiveType.Cube);
-                boatObj.name = "Boat";
-                boatObj.transform.position = new Vector3(0, 0, 0);
-                boatObj.transform.localScale = new Vector3(4, 2, 8); 
+                GameObject boatPrefab = AssetDatabase.LoadAssetAtPath<GameObject>("Assets/Core/Models/Boat/source/j-80-sailboat/source/model/sketchfab.obj");
+                if (boatPrefab != null)
+                {
+                    boatObj = (GameObject)PrefabUtility.InstantiatePrefab(boatPrefab);
+                    boatObj.name = "Boat";
+                    boatObj.transform.position = new Vector3(0, 0, 0);
+                    // Velikost a pozice kolizního boxu záleží na tom, jak je model v exportu velký
+                    boatObj.AddComponent<BoxCollider>();
+                }
+                else
+                {
+                    boatObj = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                    boatObj.name = "Boat";
+                    boatObj.transform.position = new Vector3(0, 0, 0);
+                    boatObj.transform.localScale = new Vector3(4, 2, 8); 
+                }
             }
             
             Rigidbody boatRb = boatObj.AddComponent<Rigidbody>();
