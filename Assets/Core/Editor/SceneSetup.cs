@@ -13,21 +13,28 @@ namespace SeaVibe.Editor
         [MenuItem("SeaVibe/Automaticky vytvořit herní scénu")]
         public static void CreateScene()
         {
-            if (FindAnyObjectByType<WindManager>() != null)
-            {
-                Debug.LogWarning("Scéna už zřejmě obsahuje objekty SeaVibe. Vytvořte prosím prázdnou scénu (File -> New Scene).");
-                return;
-            }
+            // 0. Úklid starých objektů
+            DestroyIfExists("WindManager");
+            DestroyIfExists("OceanManager");
+            DestroyIfExists("SeaVisual");
+            DestroyIfExists("Player");
 
             // 1. Globální manažeři
             GameObject windManagerObj = new GameObject("WindManager");
             windManagerObj.AddComponent<WindManager>();
 
             GameObject oceanManagerObj = new GameObject("OceanManager");
-            oceanManagerObj.AddComponent<OceanManager>();
+            OceanManager om = oceanManagerObj.AddComponent<OceanManager>();
+            om.currentState = OceanState.Rough;
+            om.ApplyOceanState(OceanState.Rough);
 
             // 2. Vizuální hladina moře
             GameObject seaVisual = GameObject.CreatePrimitive(PrimitiveType.Plane);
+            
+            // ZÁSADNÍ OPRAVA: CreatePrimitive automaticky přidává MeshCollider!
+            // Oceán nesmí být pevná podlaha, jinak se o něj loď roztříští a spadne na bok.
+            DestroyImmediate(seaVisual.GetComponent<Collider>());
+            
             seaVisual.name = "SeaVisual";
             seaVisual.transform.localScale = new Vector3(50, 1, 50);
             seaVisual.transform.position = Vector3.zero;
@@ -46,6 +53,9 @@ namespace SeaVibe.Editor
                 waterLayer = 4;
             }
             seaVisual.layer = waterLayer;
+            
+            // Přidáme náš aktualizovaný skript pro vlny
+            seaVisual.AddComponent<WaterMeshDeformer>();
 
             // 3. Vytvoření lodi
             GameObject boatObj = GameObject.Find("Boat");
@@ -70,10 +80,19 @@ namespace SeaVibe.Editor
                 }
             }
             
-            Rigidbody boatRb = boatObj.AddComponent<Rigidbody>();
+            Rigidbody boatRb = boatObj.GetComponent<Rigidbody>();
+            if (boatRb == null) boatRb = boatObj.AddComponent<Rigidbody>();
             boatRb.mass = 1500f;
             boatRb.linearDamping = 0.5f;
             boatRb.collisionDetectionMode = CollisionDetectionMode.Continuous;
+
+            // Úklid starých dětí lodi (Masky, plováky), pokud přegenerováváme
+            for (int i = boatObj.transform.childCount - 1; i >= 0; i--) {
+                Transform child = boatObj.transform.GetChild(i);
+                if (child.name.Contains("WaterMask") || child.name.Contains("Floater") || child.name.Contains("ItemPickup") || child.name == "Main Camera") {
+                    Undo.DestroyObjectImmediate(child.gameObject);
+                }
+            }
 
             // Získáme skutečné rozměry modelu (spočítáním všech podřazených meshů)
             Bounds bounds = new Bounds(boatObj.transform.position, Vector3.zero);
@@ -114,8 +133,11 @@ namespace SeaVibe.Editor
             Bounds hullBounds = new Bounds(boatObj.transform.position, Vector3.zero);
             bool hasHull = false;
             foreach (Renderer r in boatObj.GetComponentsInChildren<Renderer>()) {
-                // Bereme jen objekty, jejichž spodek je do 30% celkové výšky lodi (trup)
-                if (r.bounds.min.y <= lowestY + (bounds.size.y * 0.3f)) {
+                // Přeskočíme vysoké objekty (stěžně a plachty), které tvoří více než 50% celkové výšky lodi
+                if (r.bounds.size.y > bounds.size.y * 0.5f) continue;
+                
+                // Bereme jen objekty, jejichž spodek je blízko dna lodi
+                if (r.bounds.min.y <= lowestY + (bounds.size.y * 0.4f)) {
                     if (!hasHull) { hullBounds = r.bounds; hasHull = true; }
                     else { hullBounds.Encapsulate(r.bounds); }
                 }
@@ -123,13 +145,37 @@ namespace SeaVibe.Editor
             if (!hasHull) hullBounds = bounds; // Fallback
             // --- KONEC VÝPOČTU TRUPU ---
 
-            // BoxCollider přizpůsobíme tak, aby obaloval přesně trup lodi (nesmí obalovat stěžeň!)
-            // Jinak by se loď mohla převracet nebo by hráč chodil po vzduchu.
-            BoxCollider col = boatObj.GetComponent<BoxCollider>();
-            if (col == null) col = boatObj.AddComponent<BoxCollider>();
-            
-            col.center = boatObj.transform.InverseTransformPoint(hullBounds.center);
-            col.size = boatObj.transform.InverseTransformVector(hullBounds.size);
+            // Odstraníme případné předchozí collidery
+            foreach(var c in boatObj.GetComponents<Collider>()) DestroyImmediate(c);
+
+            // Vytvoříme z BoxColliderů hrubou "vanu" (podlaha a 4 stěny), aby hráč mohl chodit uvnitř
+            // a nevypadl do vody. Zabráníme tím i tomu, aby uvízl v jednom velkém bloku.
+            float t = 0.5f; // tloušťka stěn
+
+            // Podlaha
+            BoxCollider cFloor = boatObj.AddComponent<BoxCollider>();
+            cFloor.center = boatObj.transform.InverseTransformPoint(new Vector3(hullBounds.center.x, hullBounds.min.y + t/2f, hullBounds.center.z));
+            cFloor.size = boatObj.transform.InverseTransformVector(new Vector3(hullBounds.size.x, t, hullBounds.size.z));
+
+            // Levá stěna (-X)
+            BoxCollider cLeft = boatObj.AddComponent<BoxCollider>();
+            cLeft.center = boatObj.transform.InverseTransformPoint(new Vector3(hullBounds.min.x + t/2f, hullBounds.center.y, hullBounds.center.z));
+            cLeft.size = boatObj.transform.InverseTransformVector(new Vector3(t, hullBounds.size.y, hullBounds.size.z));
+
+            // Pravá stěna (+X)
+            BoxCollider cRight = boatObj.AddComponent<BoxCollider>();
+            cRight.center = boatObj.transform.InverseTransformPoint(new Vector3(hullBounds.max.x - t/2f, hullBounds.center.y, hullBounds.center.z));
+            cRight.size = boatObj.transform.InverseTransformVector(new Vector3(t, hullBounds.size.y, hullBounds.size.z));
+
+            // Zadní stěna (-Z)
+            BoxCollider cBack = boatObj.AddComponent<BoxCollider>();
+            cBack.center = boatObj.transform.InverseTransformPoint(new Vector3(hullBounds.center.x, hullBounds.center.y, hullBounds.min.z + t/2f));
+            cBack.size = boatObj.transform.InverseTransformVector(new Vector3(hullBounds.size.x, hullBounds.size.y, t));
+
+            // Přední stěna (+Z)
+            BoxCollider cFront = boatObj.AddComponent<BoxCollider>();
+            cFront.center = boatObj.transform.InverseTransformPoint(new Vector3(hullBounds.center.x, hullBounds.center.y, hullBounds.max.z - t/2f));
+            cFront.size = boatObj.transform.InverseTransformVector(new Vector3(hullBounds.size.x, hullBounds.size.y, t));
 
             // 3a. Nastavení fyziky lodě (Rigidbody a Vztlak)
             Rigidbody rb = boatObj.GetComponent<Rigidbody>();
@@ -148,11 +194,12 @@ namespace SeaVibe.Editor
             float xOffset = hullBounds.extents.x * 0.8f;
             float zOffset = hullBounds.extents.z * 0.8f;
             
-            // Posuneme bóje do 40% výšky trupu, aby se loď realisticky zanořila do vody
-            // a nevznášela se jako korková zátka (nebo se nepotopila)
+            // Posuneme bóje do 75% výšky trupu (místo 40%).
+            // Plachetnice mají totiž obří kýl, který tvoří většinu výšky, 
+            // takže 40% by znamenalo, že samotná loď bude viset ve vzduchu!
             float hullBottomY = hullBounds.min.y;
             float hullHeight = hullBounds.size.y;
-            float waterlineY = hullBottomY + (hullHeight * 0.4f); 
+            float waterlineY = hullBottomY + (hullHeight * 0.75f); 
 
             Vector3[] floaterPositions = new Vector3[]
             {
@@ -251,8 +298,8 @@ namespace SeaVibe.Editor
 
             // 7. Vytvoření Hráče
             GameObject playerObj = new GameObject("Player");
-            // Umístíme hráče do středu lodi, trochu výš nad palubu, aby spadl bezpečně na ni
-            playerObj.transform.position = new Vector3(0f, bounds.center.y + (bounds.size.y * 0.5f), 0f); 
+            // Přesné souřadnice pro kormidlo plachetnice
+            playerObj.transform.position = new Vector3(-0.14f, 6.26f, -5.64f); 
             
             FirstPersonController fpController = playerObj.AddComponent<FirstPersonController>();
             Rigidbody playerRb = playerObj.GetComponent<Rigidbody>();
@@ -284,6 +331,13 @@ namespace SeaVibe.Editor
             interaction.interactableLayer = ~0; 
 
             Debug.Log("Úspěch! Scéna SeaVibe byla automaticky vytvořena (Včetně vizuálního oceánu, truhly a inventáře).");
+        }
+
+        private static void DestroyIfExists(string name) {
+            GameObject obj = GameObject.Find(name);
+            if (obj != null) {
+                Undo.DestroyObjectImmediate(obj);
+            }
         }
     }
 }

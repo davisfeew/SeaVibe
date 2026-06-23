@@ -19,6 +19,8 @@ namespace SeaVibe.Environment
 
         private float _targetStrength;
         private Vector3 _targetDirection;
+        private float _timeSinceLastChange;
+        private float _nextChangeInterval = 5f;
 
         private void Awake()
         {
@@ -40,9 +42,13 @@ namespace SeaVibe.Environment
         {
             if (!isDynamic) return;
 
-            // Randomly change targets over time
-            if (Random.value < 0.01f * Time.deltaTime)
+            // Měníme vítr v reálném čase podle časovače
+            _timeSinceLastChange += Time.deltaTime;
+            if (_timeSinceLastChange > _nextChangeInterval)
             {
+                _timeSinceLastChange = 0f;
+                _nextChangeInterval = Random.Range(5f, 15f); // Další změna za 5 až 15 vteřin
+                
                 float randomAngle = Random.Range(-45f, 45f);
                 _targetDirection = Quaternion.Euler(0, randomAngle, 0) * windDirection;
                 _targetStrength = Random.Range(minStrength, maxStrength);

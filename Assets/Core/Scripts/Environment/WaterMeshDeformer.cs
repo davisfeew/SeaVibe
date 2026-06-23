@@ -13,7 +13,7 @@ namespace SeaVibe.Environment
         private MeshFilter _meshFilter;
         private Mesh _mesh;
         private Vector3[] _baseVertices; 
-        private Vector3[] _displacedVertices; 
+        private Vector3[] _vertices; // Cached array for better performance
 
         private void Start()
         {
@@ -28,7 +28,7 @@ namespace SeaVibe.Environment
 
             int numVertices = (resolution + 1) * (resolution + 1);
             _baseVertices = new Vector3[numVertices];
-            _displacedVertices = new Vector3[numVertices];
+            _vertices = new Vector3[numVertices];
             Vector2[] uvs = new Vector2[numVertices];
             int[] triangles = new int[resolution * resolution * 6];
 
@@ -81,21 +81,25 @@ namespace SeaVibe.Environment
         {
             if (OceanManager.Instance == null) return;
 
+            Matrix4x4 localToWorld = transform.localToWorldMatrix;
+            Matrix4x4 worldToLocal = transform.worldToLocalMatrix;
+
             for (int i = 0; i < _baseVertices.Length; i++)
             {
                 // Získáme world pozici neutrálního bodu
-                Vector3 worldPos = transform.TransformPoint(_baseVertices[i]);
+                Vector3 worldPos = localToWorld.MultiplyPoint3x4(_baseVertices[i]);
                 
                 // Získáme 3D posun od Gerstnerových vln
                 Vector3 displacement = OceanManager.Instance.GetWaveDisplacement(worldPos);
                 
                 // Přičteme posun k základní pozici a převedeme zpět do local space
-                Vector3 newWorldPos = worldPos + displacement;
-                _displacedVertices[i] = transform.InverseTransformPoint(newWorldPos);
+                worldPos += displacement;
+                _vertices[i] = worldToLocal.MultiplyPoint3x4(worldPos);
             }
 
-            _mesh.vertices = _displacedVertices;
+            _mesh.vertices = _vertices;
             _mesh.RecalculateNormals(); 
+            _mesh.RecalculateBounds();
         }
     }
 }

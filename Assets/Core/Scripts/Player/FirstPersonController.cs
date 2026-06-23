@@ -32,6 +32,7 @@ namespace SeaVibe.Player
         private float _yaw;
         private float _pitch;
         private bool _isGrounded;
+        private Vector3 _platformVelocity = Vector3.zero;
 
         private void Awake()
         {
@@ -111,7 +112,10 @@ namespace SeaVibe.Player
             targetVelocity *= currentSpeed;
 
             Vector3 velocity = _rb.linearVelocity;
-            Vector3 velocityChange = (targetVelocity - velocity);
+            // Upravujeme rychlost hráče pouze relativně vůči lodi (platformě)!
+            Vector3 relativeVelocity = velocity - _platformVelocity;
+            Vector3 velocityChange = (targetVelocity - relativeVelocity);
+            
             velocityChange.x = Mathf.Clamp(velocityChange.x, -maxVelocityChange, maxVelocityChange);
             velocityChange.z = Mathf.Clamp(velocityChange.z, -maxVelocityChange, maxVelocityChange);
             velocityChange.y = 0;
@@ -121,13 +125,25 @@ namespace SeaVibe.Player
 
         private void Jump()
         {
-            _rb.linearVelocity = new Vector3(_rb.linearVelocity.x, 0, _rb.linearVelocity.z);
+            // Ponecháme současnou rychlost Y (protože nás loď možná zrovna vymršťuje na vlně)
+            // a přidáme k ní sílu skoku.
             _rb.AddForce(Vector3.up * Mathf.Sqrt(jumpHeight * -2f * Physics.gravity.y), ForceMode.VelocityChange);
         }
 
         private void CheckGrounded()
         {
-            _isGrounded = Physics.Raycast(transform.position, Vector3.down, groundCheckDistance, groundMask);
+            RaycastHit hit;
+            _isGrounded = Physics.Raycast(transform.position, Vector3.down, out hit, groundCheckDistance, groundMask);
+            
+            if (_isGrounded && hit.rigidbody != null)
+            {
+                // Čteme rychlost lodi v bodě, kde hráč stojí
+                _platformVelocity = hit.rigidbody.GetPointVelocity(hit.point);
+            }
+            else
+            {
+                _platformVelocity = Vector3.zero;
+            }
         }
 
         private void ApplyCustomGravity()

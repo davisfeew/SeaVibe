@@ -9,15 +9,11 @@ namespace SeaVibe.Boat
         [Tooltip("Přetáhni sem 4 prázdné objekty reprezentující rohy trupu na hladině")]
         public Transform[] floaters;
         
-        [Tooltip("Virtuální kýl (posunutí těžiště dolů). Zabraňuje převrácení lodi.")]
-        public Vector3 centerOfMassOffset = new Vector3(0, -0.5f, 0);
-        
-        [Range(0.1f, 5f)]
-        public float floatingPower = 3f; 
-        
-        [Header("Hydrodynamics")]
-        public float waterDrag = 3f; 
-        public float waterAngularDrag = 5f;
+        [Header("Physics Settings")]
+        public float floatingPower = 1.5f; // Sníženo z 3.0, aby loď při pádu nevystřelila do vesmíru
+        public float waterDrag = 0.99f;
+        public float waterAngularDrag = 0.5f;
+        public float downwardCoMShift = 2.0f; // Posun těžiště o 2 metry dolů (velmi stabilní kýl)
         public float depthBeforeMaxForce = 1f;
 
         [Header("Ocean Settings")]
@@ -43,9 +39,13 @@ namespace SeaVibe.Boat
 
         private void Start()
         {
+            _rb = GetComponent<Rigidbody>();
             if (_rb != null)
             {
-                _rb.centerOfMass = centerOfMassOffset;
+                // Vypočítáme lokální směr, který odpovídá světovému "dolů".
+                // Tím zabráníme převrácení lodi na bok i v případě, že byl model v editoru manuálně otočen.
+                Vector3 localDown = transform.InverseTransformDirection(Vector3.down);
+                _rb.centerOfMass = localDown * downwardCoMShift;
             }
         }
 
@@ -79,8 +79,11 @@ namespace SeaVibe.Boat
                     // 3. LOKÁLNÍ ODPOR (Local Velocity Damping) - PŘESNÝ RECEPT PROTI SKÁKÁNÍ
                     Vector3 pointVelocity = _rb.GetPointVelocity(applyPosition);
                     // Voda je hustá! Jakmile se bójka dotkne hladiny, musí brzdit naplno, jinak loď proletí pod vodu a pak vyskočí.
-                    // Odstranili jsme násobení submersionFactorem.
                     Vector3 dampingForce = -pointVelocity * waterDrag * (_rb.mass / floaters.Length);
+                    
+                    // Snížení odporu ve směru plavby (aby loď mohla jet dopředu a nebyla bržděná vodou jak beton)
+                    dampingForce.x *= 0.1f;
+                    dampingForce.z *= 0.1f;
                     
                     // APLIKACE OBOU SIL V DANÉM BODĚ
                     _rb.AddForceAtPosition(buoyancyForce + dampingForce, applyPosition, ForceMode.Force);
