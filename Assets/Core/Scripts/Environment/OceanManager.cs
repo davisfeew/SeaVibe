@@ -2,7 +2,7 @@ using UnityEngine;
 
 namespace SeaVibe.Environment
 {
-    public enum OceanState { Calm, Moderate, Rough, Storm }
+    public enum OceanState { Flat, Calm, Moderate, Rough, Storm }
 
     public class OceanManager : MonoBehaviour
     {
@@ -41,6 +41,11 @@ namespace SeaVibe.Environment
             currentState = state;
             switch (state)
             {
+                case OceanState.Flat:
+                    waves = new Wave[] {
+                        new Wave { amplitude = 0f, directionAngle = 0f, wavelength = 10f, steepness = 0f }
+                    };
+                    break;
                 case OceanState.Calm:
                     waves = new Wave[] {
                         new Wave { amplitude = 0.15f, directionAngle = 0f, wavelength = 12f, steepness = 0.4f },

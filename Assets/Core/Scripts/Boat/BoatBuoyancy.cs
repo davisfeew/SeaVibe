@@ -13,7 +13,7 @@ namespace SeaVibe.Boat
         public float floatingPower = 1.5f; // Sníženo z 3.0, aby loď při pádu nevystřelila do vesmíru
         public float waterDrag = 0.99f;
         public float waterAngularDrag = 0.5f;
-        public float downwardCoMShift = 2.0f; // Posun těžiště o 2 metry dolů (velmi stabilní kýl)
+        public float downwardCoMShift = 4.0f; // Extrémní posun těžiště o 4 metry dolů pro dokonalou stabilitu
         public float depthBeforeMaxForce = 1f;
 
         [Header("Ocean Settings")]
@@ -42,10 +42,29 @@ namespace SeaVibe.Boat
             _rb = GetComponent<Rigidbody>();
             if (_rb != null)
             {
+                // Najdeme skutečný geometrický střed lodě (modely z internetu mají často
+                // počátek/pivot posunutý dozadu, což způsobuje "zvedání na zadní" neboli wheelie).
+                Renderer[] renderers = GetComponentsInChildren<Renderer>();
+                Vector3 localCenter = Vector3.zero;
+                
+                if (renderers.Length > 0)
+                {
+                    Bounds bounds = renderers[0].bounds;
+                    for (int i = 1; i < renderers.Length; i++) {
+                        bounds.Encapsulate(renderers[i].bounds);
+                    }
+                    localCenter = transform.InverseTransformPoint(bounds.center);
+                }
+
                 // Vypočítáme lokální směr, který odpovídá světovému "dolů".
-                // Tím zabráníme převrácení lodi na bok i v případě, že byl model v editoru manuálně otočen.
+                // Tím zabráníme převrácení lodi na bok.
                 Vector3 localDown = transform.InverseTransformDirection(Vector3.down);
-                _rb.centerOfMass = localDown * downwardCoMShift;
+                
+                // Přepočítáme posun těžiště tak, aby ignoroval brutální scale modelů
+                float localShift = downwardCoMShift / Mathf.Max(transform.lossyScale.y, 0.01f);
+                
+                // Těžiště nastavíme do skutečného geometrického středu a masivně ho posuneme dolů k zemi
+                _rb.centerOfMass = localCenter + (localDown * localShift);
             }
         }
 

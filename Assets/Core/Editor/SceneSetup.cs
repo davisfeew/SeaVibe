@@ -25,8 +25,8 @@ namespace SeaVibe.Editor
 
             GameObject oceanManagerObj = new GameObject("OceanManager");
             OceanManager om = oceanManagerObj.AddComponent<OceanManager>();
-            om.currentState = OceanState.Rough;
-            om.ApplyOceanState(OceanState.Rough);
+            om.currentState = OceanState.Flat;
+            om.ApplyOceanState(OceanState.Flat);
 
             // 2. Vizuální hladina moře
             GameObject seaVisual = GameObject.CreatePrimitive(PrimitiveType.Plane);
@@ -62,10 +62,20 @@ namespace SeaVibe.Editor
             
             if (boatObj == null)
             {
-                GameObject boatPrefab = AssetDatabase.LoadAssetAtPath<GameObject>("Assets/Core/Models/Boat/source/j-80-sailboat/source/model/sketchfab.obj");
+                GameObject boatPrefab = AssetDatabase.LoadAssetAtPath<GameObject>("Assets/ZefiroBoat/source/ZEFIRO.fbx");
                 if (boatPrefab != null)
                 {
                     boatObj = (GameObject)PrefabUtility.InstantiatePrefab(boatPrefab);
+
+                    // --- ZAROVNÁNÍ IMPORTNÍCH CHYB ROTACE ---
+                    // Modely z internetu mají často nepatrné náklony (např. -88 stupňů místo -90). 
+                    // Kvůli tomu loď plave fyzikálně rovně, ale vizuálně je nakloněná.
+                    Vector3 euler = boatObj.transform.eulerAngles;
+                    euler.x = Mathf.Round(euler.x / 90f) * 90f;
+                    euler.y = Mathf.Round(euler.y / 90f) * 90f;
+                    euler.z = Mathf.Round(euler.z / 90f) * 90f;
+                    boatObj.transform.eulerAngles = euler;
+                    
                     boatObj.name = "Boat";
                     boatObj.transform.position = new Vector3(0, 0, 0);
                     // Velikost a pozice kolizního boxu záleží na tom, jak je model v exportu velký
@@ -86,6 +96,18 @@ namespace SeaVibe.Editor
             boatRb.linearDamping = 0.5f;
             boatRb.collisionDetectionMode = CollisionDetectionMode.Continuous;
 
+            // --- AUTO-ROTACE (Ochrana proti ležícím modelům) ---
+            // Modely z internetu (jako J-80) často leží na boku. Pokud uživatel spustil skript
+            // na ležící lodi a otočil ji až pak, fyzika se kompletně zbláznila.
+            Bounds checkBounds = GetTotalBounds(boatObj);
+            
+            // Pokud je výška extrémně malá vůči délce a šířce (méně než 20 %), loď zaručeně leží na boku!
+            if (checkBounds.size.y < checkBounds.size.x * 0.2f && checkBounds.size.y < checkBounds.size.z * 0.2f) {
+                // Loď leží. Rotací o 90 stupňů na ose Z ji u J-80 postavíme svisle!
+                boatObj.transform.rotation = Quaternion.Euler(0, 0, 90);
+            }
+            // ----------------------------------------------------
+
             // Úklid starých dětí lodi (Masky, plováky), pokud přegenerováváme
             for (int i = boatObj.transform.childCount - 1; i >= 0; i--) {
                 Transform child = boatObj.transform.GetChild(i);
@@ -95,118 +117,120 @@ namespace SeaVibe.Editor
             }
 
             // Získáme skutečné rozměry modelu (spočítáním všech podřazených meshů)
-            Bounds bounds = new Bounds(boatObj.transform.position, Vector3.zero);
-            bool hasBounds = false;
-            foreach (Renderer r in boatObj.GetComponentsInChildren<Renderer>())
-            {
-                if (!hasBounds)
-                {
-                    bounds = r.bounds;
-                    hasBounds = true;
-                }
-                else
-                {
-                    bounds.Encapsulate(r.bounds);
-                }
-            }
+            Bounds bounds = GetTotalBounds(boatObj);
 
-            // Nastavíme loď tak, aby byla větší (přibližně 20 metrů dlouhá)
+            // Nastavíme loď tak, aby byla masivní (65 metrů dlouhá)
             // U lodí z internetu nevíme, jestli míří po ose Z nebo X, takže vezmeme tu delší stranu.
-            float targetLength = 20f; 
+            float targetLength = 65f; 
             float currentLength = Mathf.Max(bounds.size.x, bounds.size.z); 
             float scaleMultiplier = targetLength / currentLength;
             boatObj.transform.localScale = new Vector3(scaleMultiplier, scaleMultiplier, scaleMultiplier);
             
+            // KRITICKÉ: Musíme přepočítat rozměry (bounds) PO zvětšení modelu, 
+            // jinak by se celá fyzika počítala pro miniaturní loď!
+            bounds = GetTotalBounds(boatObj);
+            
             // KRITICKÁ OPRAVA: Po zvětšení modelu se posunul jeho střed. 
             // Musíme bounds spočítat znovu, jinak by všechno létalo mimo loď!
-            bounds = new Bounds(boatObj.transform.position, Vector3.zero);
-            foreach (Renderer r in boatObj.GetComponentsInChildren<Renderer>()) {
-                bounds.Encapsulate(r.bounds);
-            }
+            bounds = GetTotalBounds(boatObj);
             Vector3 extents = bounds.extents;
 
-            // --- VÝPOČET TRUPU (Ignorujeme stěžně a plachty) ---
-            float lowestY = float.MaxValue;
-            foreach (Renderer r in boatObj.GetComponentsInChildren<Renderer>()) {
-                if (r.bounds.min.y < lowestY) lowestY = r.bounds.min.y;
+            // --- ROBUSTNÍ DETEKCE TVARU LODI ---
+            // U modelů z jedné sítě (single-mesh) nelze stěžeň oddělit fyzicky.
+            // Použijeme spolehlivý geometrický odhad proporcí lodi.
+            float boatLength = Mathf.Max(bounds.size.x, bounds.size.z);
+            float boatHeight = bounds.size.y;
+            float lowestY = bounds.min.y;
+            
+            bool isSailboat = (boatHeight / boatLength) > 0.6f;
+            
+            // Ponor (waterline) od nejnižšího bodu
+            // Trup lodi s kýlem tvoří zhruba 30% celkové výšky plachetnice. Ponoříme 80% tohoto trupu.
+            float draft = isSailboat ? (boatHeight * 0.3f * 0.8f) : (boatHeight * 0.25f);
+            float waterlineY = lowestY + draft;
+            
+            // Šířka trupu (plachty často přesahují trup do boku, omezíme to)
+            float hullWidthX = bounds.size.x;
+            float hullWidthZ = bounds.size.z;
+            if (isSailboat) {
+                float maxHullWidth = boatLength * 0.35f; 
+                if (bounds.size.x < bounds.size.z) hullWidthX = Mathf.Min(bounds.size.x, maxHullWidth);
+                else hullWidthZ = Mathf.Min(bounds.size.z, maxHullWidth);
             }
-            Bounds hullBounds = new Bounds(boatObj.transform.position, Vector3.zero);
-            bool hasHull = false;
-            foreach (Renderer r in boatObj.GetComponentsInChildren<Renderer>()) {
-                // Přeskočíme vysoké objekty (stěžně a plachty), které tvoří více než 50% celkové výšky lodi
-                if (r.bounds.size.y > bounds.size.y * 0.5f) continue;
-                
-                // Bereme jen objekty, jejichž spodek je blízko dna lodi
-                if (r.bounds.min.y <= lowestY + (bounds.size.y * 0.4f)) {
-                    if (!hasHull) { hullBounds = r.bounds; hasHull = true; }
-                    else { hullBounds.Encapsulate(r.bounds); }
-                }
-            }
-            if (!hasHull) hullBounds = bounds; // Fallback
-            // --- KONEC VÝPOČTU TRUPU ---
+            // --- KONEC DETEKCE ---
 
-            // Odstraníme případné předchozí collidery
-            foreach(var c in boatObj.GetComponents<Collider>()) DestroyImmediate(c);
+            // Odstraníme případné předchozí collidery (i ze všech podřazených objektů!)
+            foreach(var c in boatObj.GetComponentsInChildren<Collider>()) DestroyImmediate(c);
+            
+            // Zničíme animátory z modelů, protože ty často natvrdo uzamykají rotaci proti fyzice!
+            foreach(var anim in boatObj.GetComponentsInChildren<Animator>()) DestroyImmediate(anim);
+            foreach(var anim in boatObj.GetComponentsInChildren<Animation>()) DestroyImmediate(anim);
 
-            // Vytvoříme z BoxColliderů hrubou "vanu" (podlaha a 4 stěny), aby hráč mohl chodit uvnitř
-            // a nevypadl do vody. Zabráníme tím i tomu, aby uvízl v jednom velkém bloku.
+            // Vytvoříme z BoxColliderů ohrádku
             float t = 0.5f; // tloušťka stěn
+            float wallHeight = 3f; // Výška ohrádky
+            
+            // Podlaha kokpitu bude blízko horního okraje trupu, aby se hráč nepropadl k hladině
+            float trueHullHeight = isSailboat ? (boatHeight * 0.3f) : boatHeight;
+            float floorY = lowestY + (trueHullHeight * 0.95f); 
 
             // Podlaha
             BoxCollider cFloor = boatObj.AddComponent<BoxCollider>();
-            cFloor.center = boatObj.transform.InverseTransformPoint(new Vector3(hullBounds.center.x, hullBounds.min.y + t/2f, hullBounds.center.z));
-            cFloor.size = boatObj.transform.InverseTransformVector(new Vector3(hullBounds.size.x, t, hullBounds.size.z));
+            cFloor.center = boatObj.transform.InverseTransformPoint(new Vector3(bounds.center.x, floorY - t/2f, bounds.center.z));
+            Vector3 sFloor = boatObj.transform.InverseTransformVector(new Vector3(hullWidthX, t, hullWidthZ));
+            cFloor.size = new Vector3(Mathf.Abs(sFloor.x), Mathf.Abs(sFloor.y), Mathf.Abs(sFloor.z));
 
             // Levá stěna (-X)
             BoxCollider cLeft = boatObj.AddComponent<BoxCollider>();
-            cLeft.center = boatObj.transform.InverseTransformPoint(new Vector3(hullBounds.min.x + t/2f, hullBounds.center.y, hullBounds.center.z));
-            cLeft.size = boatObj.transform.InverseTransformVector(new Vector3(t, hullBounds.size.y, hullBounds.size.z));
+            cLeft.center = boatObj.transform.InverseTransformPoint(new Vector3(bounds.center.x - hullWidthX/2f + t/2f, floorY + wallHeight/2f, bounds.center.z));
+            Vector3 sLeft = boatObj.transform.InverseTransformVector(new Vector3(t, wallHeight, hullWidthZ));
+            cLeft.size = new Vector3(Mathf.Abs(sLeft.x), Mathf.Abs(sLeft.y), Mathf.Abs(sLeft.z));
 
             // Pravá stěna (+X)
             BoxCollider cRight = boatObj.AddComponent<BoxCollider>();
-            cRight.center = boatObj.transform.InverseTransformPoint(new Vector3(hullBounds.max.x - t/2f, hullBounds.center.y, hullBounds.center.z));
-            cRight.size = boatObj.transform.InverseTransformVector(new Vector3(t, hullBounds.size.y, hullBounds.size.z));
+            cRight.center = boatObj.transform.InverseTransformPoint(new Vector3(bounds.center.x + hullWidthX/2f - t/2f, floorY + wallHeight/2f, bounds.center.z));
+            Vector3 sRight = boatObj.transform.InverseTransformVector(new Vector3(t, wallHeight, hullWidthZ));
+            cRight.size = new Vector3(Mathf.Abs(sRight.x), Mathf.Abs(sRight.y), Mathf.Abs(sRight.z));
 
             // Zadní stěna (-Z)
             BoxCollider cBack = boatObj.AddComponent<BoxCollider>();
-            cBack.center = boatObj.transform.InverseTransformPoint(new Vector3(hullBounds.center.x, hullBounds.center.y, hullBounds.min.z + t/2f));
-            cBack.size = boatObj.transform.InverseTransformVector(new Vector3(hullBounds.size.x, hullBounds.size.y, t));
+            cBack.center = boatObj.transform.InverseTransformPoint(new Vector3(bounds.center.x, floorY + wallHeight/2f, bounds.center.z - hullWidthZ/2f + t/2f));
+            Vector3 sBack = boatObj.transform.InverseTransformVector(new Vector3(hullWidthX, wallHeight, t));
+            cBack.size = new Vector3(Mathf.Abs(sBack.x), Mathf.Abs(sBack.y), Mathf.Abs(sBack.z));
 
             // Přední stěna (+Z)
             BoxCollider cFront = boatObj.AddComponent<BoxCollider>();
-            cFront.center = boatObj.transform.InverseTransformPoint(new Vector3(hullBounds.center.x, hullBounds.center.y, hullBounds.max.z - t/2f));
-            cFront.size = boatObj.transform.InverseTransformVector(new Vector3(hullBounds.size.x, hullBounds.size.y, t));
+            cFront.center = boatObj.transform.InverseTransformPoint(new Vector3(bounds.center.x, floorY + wallHeight/2f, bounds.center.z + hullWidthZ/2f - t/2f));
+            Vector3 sFront = boatObj.transform.InverseTransformVector(new Vector3(hullWidthX, wallHeight, t));
+            cFront.size = new Vector3(Mathf.Abs(sFront.x), Mathf.Abs(sFront.y), Mathf.Abs(sFront.z));
 
             // 3a. Nastavení fyziky lodě (Rigidbody a Vztlak)
             Rigidbody rb = boatObj.GetComponent<Rigidbody>();
             if (rb == null) rb = boatObj.AddComponent<Rigidbody>();
-            rb.mass = 1000f; // 1 tuna
+            rb.mass = 15000f; // Masivní 65m loď potřebuje velkou váhu
             rb.linearDamping = 0.5f;
-            rb.angularDamping = 1.5f;
+            rb.angularDamping = 3.0f; // Extrémní tlumení rotace, aby se 65m loď přestala houpat
             rb.collisionDetectionMode = CollisionDetectionMode.Continuous;
 
+            // Nastavíme vztlak
             BoatBuoyancy buoyancy = boatObj.GetComponent<BoatBuoyancy>();
             if (buoyancy == null) buoyancy = boatObj.AddComponent<BoatBuoyancy>();
+            buoyancy.downwardCoMShift = targetLength * 0.05f; // Těžiště blíž k hladině, 13m bylo moc a fungovalo to jako pomalé kyvadlo
+            buoyancy.waterAngularDrag = 3.0f; // Vynutíme extrémní tlumení přímo ve vztlaku, aby nepřepisoval Rigidbody
+            buoyancy.waterDrag = 1.5f; // Zvýšíme i odpor vody proti houpání nahoru/dolů
             
             Transform[] newFloaters = new Transform[4];
             
-            // Nastavíme 4 rohy bójí (World Space) podle trupu
-            float xOffset = hullBounds.extents.x * 0.8f;
-            float zOffset = hullBounds.extents.z * 0.8f;
-            
-            // Posuneme bóje do 75% výšky trupu (místo 40%).
-            // Plachetnice mají totiž obří kýl, který tvoří většinu výšky, 
-            // takže 40% by znamenalo, že samotná loď bude viset ve vzduchu!
-            float hullBottomY = hullBounds.min.y;
-            float hullHeight = hullBounds.size.y;
-            float waterlineY = hullBottomY + (hullHeight * 0.75f); 
+            // Nastavíme 4 rohy bójí (World Space) podle skutečné šířky trupu
+            float xOffset = hullWidthX / 2f * 0.8f;
+            float zOffset = hullWidthZ / 2f * 0.8f;
 
             Vector3[] floaterPositions = new Vector3[]
             {
-                new Vector3(hullBounds.center.x - xOffset, waterlineY, hullBounds.center.z + zOffset),
-                new Vector3(hullBounds.center.x + xOffset, waterlineY, hullBounds.center.z + zOffset),
-                new Vector3(hullBounds.center.x - xOffset, waterlineY, hullBounds.center.z - zOffset),
-                new Vector3(hullBounds.center.x + xOffset, waterlineY, hullBounds.center.z - zOffset)
+                new Vector3(bounds.center.x - xOffset, waterlineY, bounds.center.z + zOffset),
+                new Vector3(bounds.center.x + xOffset, waterlineY, bounds.center.z + zOffset),
+                new Vector3(bounds.center.x - xOffset, waterlineY, bounds.center.z - zOffset),
+                new Vector3(bounds.center.x + xOffset, waterlineY, bounds.center.z - zOffset)
             };
 
             for (int i = 0; i < 4; i++)
@@ -219,14 +243,12 @@ namespace SeaVibe.Editor
 
             // --- DOKONALÁ MASKA LODI (Duplicate Mesh + Internal Sealer) ---
             GameObject maskObj = new GameObject("WaterMask");
-            maskObj.transform.SetParent(boatObj.transform);
-            maskObj.transform.localPosition = Vector3.zero;
-            maskObj.transform.localRotation = Quaternion.identity;
-            maskObj.transform.localScale = Vector3.one;
+            maskObj.transform.SetParent(boatObj.transform, false);
             
             Shader maskShader = AssetDatabase.LoadAssetAtPath<Shader>("Assets/Core/Shaders/WaterMask.shader");
-            Material maskMat = new Material(maskShader);
-            if (maskShader == null) Debug.LogWarning("Shader WaterMask nenalezen!");
+            Material maskMat = new Material(Shader.Find("Standard"));
+            maskMat.color = Color.black; 
+            if (maskShader != null) maskMat = new Material(maskShader);
             
             // 1. Zkopírujeme stěny a palubu lodi (přesná silueta)
             foreach (Renderer r in boatObj.GetComponentsInChildren<Renderer>())
@@ -266,15 +288,17 @@ namespace SeaVibe.Editor
             // 2. Přidáme vnitřní ucpávku (Sealer Box), která ucpe díru na schody v palubě
             GameObject sealer = GameObject.CreatePrimitive(PrimitiveType.Cube);
             sealer.name = "Stairwell_Sealer_Mask";
-            sealer.transform.position = hullBounds.center;
-            sealer.transform.rotation = boatObj.transform.rotation;
             
-            // Místo složité matematiky s ohraničením (které občas započítá stěžeň a udělá obří krabici)
-            // vytvoříme pevnou ucpávku o velikosti 5x5x5 metrů. To spolehlivě ucpe díru na schody,
-            // ale nevyleze to ven z lodi (loď má 20 metrů).
-            sealer.transform.localScale = new Vector3(5f, 5f, 5f);
+            // Naparentujeme přímo na loď, aby se nám dobře počítalo v jejím lokálním prostoru
+            sealer.transform.SetParent(boatObj.transform, false);
+            sealer.transform.localPosition = boatObj.transform.InverseTransformPoint(new Vector3(bounds.center.x, waterlineY, bounds.center.z));
+            sealer.transform.localRotation = Quaternion.identity;
             
-            // AŽ POTÉ naparentujeme se zachováním world transformace
+            // Zmenšíme ucpávku tak, aby se na 100% vešla do trupu a netrčela ven do vody
+            Vector3 localSize = boatObj.transform.InverseTransformVector(new Vector3(hullWidthX * 0.7f, 2f, hullWidthZ * 0.7f));
+            sealer.transform.localScale = new Vector3(Mathf.Abs(localSize.x), Mathf.Abs(localSize.y), Mathf.Abs(localSize.z));
+            
+            // AŽ POTÉ přeparentujeme na maskObj
             sealer.transform.SetParent(maskObj.transform, true);
             
             DestroyImmediate(sealer.GetComponent<Collider>());
@@ -298,13 +322,24 @@ namespace SeaVibe.Editor
 
             // 7. Vytvoření Hráče
             GameObject playerObj = new GameObject("Player");
-            // Přesné souřadnice pro kormidlo plachetnice
-            playerObj.transform.position = new Vector3(-0.14f, 6.26f, -5.64f); 
+            // Dynamické umístění postavy: postavit ji přesně doprostřed lodi a shodit ji z výšky (střecha kajuty apod.)
+            // Tím zaručíme, že se hráč neobjeví uvnitř žádné geometrie, i když má loď velkou kajutu.
+            playerObj.transform.position = new Vector3(bounds.center.x, bounds.max.y + 5.0f, bounds.center.z);
             
+            // Nastavení hráče (výška, fyzika)
             FirstPersonController fpController = playerObj.AddComponent<FirstPersonController>();
             Rigidbody playerRb = playerObj.GetComponent<Rigidbody>();
-            playerRb.constraints = RigidbodyConstraints.FreezeRotation;
-            playerRb.collisionDetectionMode = CollisionDetectionMode.Continuous;
+            if (playerRb != null) {
+                playerRb.constraints = RigidbodyConstraints.FreezeRotationX | RigidbodyConstraints.FreezeRotationY | RigidbodyConstraints.FreezeRotationZ;
+            }
+
+            // KRITICKÉ: Posuneme celou loď i hráče přesně na hladinu vody (Y = 0 pro vodorysku)
+            // Plus musíme přidat přesný ponor rovnováhy (submersion = 1 / floatingPower * depthBeforeMaxForce).
+            // floatingPower je 1.5, depthBeforeMaxForce je 1.0 => 1/1.5 * 1.0 = 0.666m pod vodorysku.
+            // Tím zabráníme jakémukoliv propadu po startu a houpání.
+            float equilibriumDepth = 0.666f;
+            boatObj.transform.position = new Vector3(0, -(waterlineY + equilibriumDepth), 0);
+            playerObj.transform.position += new Vector3(0, -(waterlineY + equilibriumDepth), 0);
 
             // Inventář hráče
             playerObj.AddComponent<Inventory.Inventory>();
@@ -338,6 +373,16 @@ namespace SeaVibe.Editor
             if (obj != null) {
                 Undo.DestroyObjectImmediate(obj);
             }
+        }
+
+        private static Bounds GetTotalBounds(GameObject obj) {
+            Renderer[] renderers = obj.GetComponentsInChildren<Renderer>();
+            if (renderers.Length == 0) return new Bounds(obj.transform.position, Vector3.zero);
+            Bounds b = renderers[0].bounds;
+            for (int i = 1; i < renderers.Length; i++) {
+                b.Encapsulate(renderers[i].bounds);
+            }
+            return b;
         }
     }
 }
