@@ -9,7 +9,7 @@ namespace SeaVibe.Boat
         public float forwardForce = 40000f; // Zvýšený tah vpřed
         public float reverseForce = 15000f; // Zpětný tah
         public float turnTorque = 500000f; // Brutální kroutící moment pro otáčení
-        public float rollTorque = 150000f; // Kroutící moment pro vizuální náklon lodi do zatáčky
+        public float rollTorque = 20000f; // Kroutící moment pro vizuální náklon lodi do zatáčky (sníženo, aby se loď nepřevracela)
         
         [Header("Physics Realism")]
         public float lateralDrag = 2.5f; // Odpor vody proti klouzání lodi do boku
@@ -19,16 +19,30 @@ namespace SeaVibe.Boat
         [Tooltip("Změňte na 90, -90 nebo 180, pokud loď jede bokem místo dopředu.")]
         public float forwardAngleOffset = 0f; 
         
+        [Tooltip("Posuňte těžiště lodi pro vyvážení. Pokud se loď naklání vlevo, dejte X např. na 0.5 (doprava).")]
+        public Vector3 centerOfMassOffset = Vector3.zero;
+        
         [HideInInspector]
         public bool isSteering = false;
         
         private Rigidbody _rb;
         private Transform _steeringWheel;
+        private Vector3 _originalCenterOfMass;
 
         private void Awake()
         {
             _rb = GetComponent<Rigidbody>();
             _steeringWheel = transform.Find("SteeringWheel");
+            _originalCenterOfMass = _rb.centerOfMass;
+        }
+
+        private void Update()
+        {
+            if (_rb != null)
+            {
+                // Umožníme ladění těžiště za běhu z Inspektoru
+                _rb.centerOfMass = _originalCenterOfMass + centerOfMassOffset;
+            }
         }
 
         private Vector3 GetVisualForward()

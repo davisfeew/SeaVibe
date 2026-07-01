@@ -10,6 +10,63 @@ namespace SeaVibe.Editor
 {
     public class SceneSetup : EditorWindow
     {
+        [MenuItem("SeaVibe/Opravit průhledné materiály na lodi")]
+        public static void FixBoatMaterials()
+        {
+            GameObject boatObj = GameObject.Find("Boat");
+            if (boatObj == null) {
+                Debug.LogWarning("Loď (objekt 'Boat') nebyla ve scéně nalezena!");
+                return;
+            }
+            
+            // Vytvoříme složku pro opravené materiály
+            if (!AssetDatabase.IsValidFolder("Assets/ZefiroBoat")) AssetDatabase.CreateFolder("Assets", "ZefiroBoat");
+            if (!AssetDatabase.IsValidFolder("Assets/ZefiroBoat/Materials_Fixed")) AssetDatabase.CreateFolder("Assets/ZefiroBoat", "Materials_Fixed");
+
+            foreach (Renderer r in boatObj.GetComponentsInChildren<Renderer>())
+            {
+                // Přeskočíme naši speciální vodní masku, tu opravovat nechceme!
+                if (r.gameObject.name.Contains("WaterMask")) continue;
+
+                Material[] mats = r.sharedMaterials;
+                Material[] newMats = new Material[mats.Length];
+                
+                for (int i = 0; i < mats.Length; i++)
+                {
+                    Material m = mats[i];
+                    if (m == null) continue;
+                    
+                    // Vyčistíme jméno od "(Instance)" a lomítek, která by rozbila cestu
+                    string cleanName = m.name.Replace("(Instance)", "").Replace("/", "_").Replace("\\", "_").Trim();
+                    string path = "Assets/ZefiroBoat/Materials_Fixed/" + cleanName + "_Opaque.mat";
+                    
+                    Material existingMat = AssetDatabase.LoadAssetAtPath<Material>(path);
+                    
+                    if (existingMat == null) {
+                        // Vytvoříme novou instanci pro úpravu
+                        Material newMat = new Material(m);
+                        
+                        // Změna na Opaque pro URP Lit shader
+                        if (newMat.HasProperty("_Surface")) newMat.SetFloat("_Surface", 0); // 0 = Opaque
+                        newMat.SetOverrideTag("RenderType", "Opaque");
+                        if (newMat.HasProperty("_SrcBlend")) newMat.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.One);
+                        if (newMat.HasProperty("_DstBlend")) newMat.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.Zero);
+                        if (newMat.HasProperty("_ZWrite")) newMat.SetInt("_ZWrite", 1);
+                        newMat.DisableKeyword("_ALPHAPREMULTIPLY_ON");
+                        newMat.DisableKeyword("_SURFACE_TYPE_TRANSPARENT");
+                        newMat.renderQueue = -1;
+                        
+                        AssetDatabase.CreateAsset(newMat, path);
+                        existingMat = newMat;
+                    }
+                    newMats[i] = existingMat;
+                }
+                r.sharedMaterials = newMats;
+            }
+            AssetDatabase.SaveAssets();
+            Debug.Log("ÚSPĚCH: Materiály na lodi byly automaticky opraveny na neprůhledné (Opaque) a uloženy do Assets/ZefiroBoat/Materials_Fixed!");
+        }
+
         [MenuItem("SeaVibe/Automaticky vytvořit herní scénu")]
         public static void CreateScene()
         {
@@ -108,10 +165,10 @@ namespace SeaVibe.Editor
             }
             // ----------------------------------------------------
 
-            // Úklid starých dětí lodi (Masky, plováky), pokud přegenerováváme
+            // Úklid starých dětí lodi (Masky, plováky, kormidlo), pokud přegenerováváme
             for (int i = boatObj.transform.childCount - 1; i >= 0; i--) {
                 Transform child = boatObj.transform.GetChild(i);
-                if (child.name.Contains("WaterMask") || child.name.Contains("Floater") || child.name.Contains("ItemPickup") || child.name == "Main Camera") {
+                if (child.name.Contains("WaterMask") || child.name.Contains("Floater") || child.name.Contains("ItemPickup") || child.name.Contains("SteeringWheel") || child.name == "Main Camera") {
                     Undo.DestroyObjectImmediate(child.gameObject);
                 }
             }
