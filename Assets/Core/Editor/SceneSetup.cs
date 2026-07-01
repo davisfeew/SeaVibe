@@ -92,7 +92,7 @@ namespace SeaVibe.Editor
             
             Rigidbody boatRb = boatObj.GetComponent<Rigidbody>();
             if (boatRb == null) boatRb = boatObj.AddComponent<Rigidbody>();
-            boatRb.mass = 1500f;
+            boatRb.mass = 2500f;
             boatRb.linearDamping = 0.5f;
             boatRb.collisionDetectionMode = CollisionDetectionMode.Continuous;
 
@@ -119,12 +119,15 @@ namespace SeaVibe.Editor
             // Získáme skutečné rozměry modelu (spočítáním všech podřazených meshů)
             Bounds bounds = GetTotalBounds(boatObj);
 
-            // Nastavíme loď tak, aby byla masivní (65 metrů dlouhá)
+            // Nastavíme loď na reálnou velikost 20 metrů (např. běžná jachta)
             // U lodí z internetu nevíme, jestli míří po ose Z nebo X, takže vezmeme tu delší stranu.
-            float targetLength = 65f; 
+            float targetLength = 20f; 
             float currentLength = Mathf.Max(bounds.size.x, bounds.size.z); 
-            float scaleMultiplier = targetLength / currentLength;
-            boatObj.transform.localScale = new Vector3(scaleMultiplier, scaleMultiplier, scaleMultiplier);
+            if (currentLength > 0.01f)
+            {
+                float scaleMultiplier = targetLength / currentLength;
+                boatObj.transform.localScale = boatObj.transform.localScale * scaleMultiplier;
+            }
             
             // KRITICKÉ: Musíme přepočítat rozměry (bounds) PO zvětšení modelu, 
             // jinak by se celá fyzika počítala pro miniaturní loď!
@@ -205,10 +208,14 @@ namespace SeaVibe.Editor
             cFront.size = new Vector3(Mathf.Abs(sFront.x), Mathf.Abs(sFront.y), Mathf.Abs(sFront.z));
 
             // 3a. Nastavení fyziky lodě (Rigidbody a Vztlak)
+            // Změníme těžiště tak, aby odpovídalo skutečnému vizuálnímu středu lodi a bylo posunuto DOLŮ.
+            // Kvůli deformovaným FBX modelům musíme najít, která lokální osa je "dolů"
             Rigidbody rb = boatObj.GetComponent<Rigidbody>();
-            if (rb == null) rb = boatObj.AddComponent<Rigidbody>();
-            rb.mass = 15000f; // Masivní 65m loď potřebuje velkou váhu
-            rb.linearDamping = 0.5f;
+            rb.mass = 2500f; // Váha pro 20m loď
+            
+            Vector3 localCenter = boatObj.transform.InverseTransformPoint(bounds.center);
+            Vector3 localDown = boatObj.transform.InverseTransformDirection(Vector3.down);
+            rb.centerOfMass = localCenter + localDown * (boatHeight * 0.4f);
             rb.angularDamping = 3.0f; // Extrémní tlumení rotace, aby se 65m loď přestala houpat
             rb.collisionDetectionMode = CollisionDetectionMode.Continuous;
 
@@ -320,6 +327,32 @@ namespace SeaVibe.Editor
             itemObj.AddComponent<ItemPickup>();
             // Poznámka: itemData si musí uživatel přiřadit ručně z Assets složky
 
+            // 6b. Kormidlo (Zástupný válec)
+            GameObject wheelObj = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+            wheelObj.name = "SteeringWheel";
+            wheelObj.transform.SetParent(boatObj.transform);
+            // Umístění kormidla na zádi lodi (relativně)
+            wheelObj.transform.position = new Vector3(bounds.center.x, floorY + 1.2f, bounds.center.z - currentLength * 0.3f);
+            wheelObj.transform.rotation = Quaternion.Euler(90, 0, 0); // Natočení jako volant
+            
+            // Kompenzace velikosti rodiče, aby měl válec v reálu přesně 60x10x60 cm
+            Vector3 pScale = boatObj.transform.lossyScale;
+            wheelObj.transform.localScale = new Vector3(0.6f / pScale.x, 0.1f / pScale.y, 0.6f / pScale.z);
+            
+            // Kamera pro kormidlování (umístěná nad a za kormidlem)
+            GameObject steeringCamObj = new GameObject("SteeringCamera");
+            // Nastavíme reálnou pozici nezávisle na deformaci měřítka
+            steeringCamObj.transform.position = wheelObj.transform.position + new Vector3(0, 4f, -4f); 
+            steeringCamObj.transform.rotation = Quaternion.Euler(20, 0, 0); // Mírně nakloněná dolů
+            steeringCamObj.transform.SetParent(wheelObj.transform, true); // true zachová reálnou pozici
+            
+            Camera steeringCam = steeringCamObj.AddComponent<Camera>();
+            steeringCamObj.SetActive(false);
+            
+            SeaVibe.Interaction.SteeringWheel steeringScript = wheelObj.AddComponent<SeaVibe.Interaction.SteeringWheel>();
+            steeringScript.steeringCamera = steeringCam;
+            steeringScript.boatController = boatObj.GetComponent<BoatController>();
+
             // 7. Vytvoření Hráče
             GameObject playerObj = new GameObject("Player");
             // Dynamické umístění postavy: postavit ji přesně doprostřed lodi a shodit ji z výšky (střecha kajuty apod.)
@@ -364,6 +397,10 @@ namespace SeaVibe.Editor
             PlayerInteraction interaction = playerObj.AddComponent<PlayerInteraction>();
             interaction.playerCamera = cam;
             interaction.interactableLayer = ~0; 
+            
+            // Propojení hráče s kormidlem
+            steeringScript.player = playerObj.transform;
+            steeringScript.playerCamera = cam;
 
             Debug.Log("Úspěch! Scéna SeaVibe byla automaticky vytvořena (Včetně vizuálního oceánu, truhly a inventáře).");
         }

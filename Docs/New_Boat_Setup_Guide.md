@@ -31,8 +31,8 @@ Nemusíte ručně vytvářet fyziku, trup lodi ani dávat lodi těžiště. Skri
 2. **Spuštění generátoru:**
    - V horním menu Unity klikněte na **`SeaVibe -> Automaticky vytvořit herní scénu`**.
    - Během pár vteřin se ve vaší scéně objeví:
-     - **Model Vaší Lodi:** Automaticky zarovnaný a masivně zvětšený na délku **65 metrů** (aby působil jako opravdová jachta). Fyzikální model, ohrady a plováky se přesně přizpůsobí této obří velikosti.
-     - **Fyzika a Těžiště:** Loď dostane váhu **15 tun** a její těžiště je dynamicky zavěšeno **hluboko pod úroveň hladiny** (20 % z délky lodě, tedy např. 13 metrů hluboko). To zaručuje, že 65metrovou loď nepřevrátí žádná běžná síla ani chození postavy.
+     - **Model Vaší Lodi:** Automaticky zarovnaný a zvětšený na reálnou délku **20 metrů** (např. běžná jachta). Fyzikální model, ohrady a plováky se přesně přizpůsobí této velikosti.
+     - **Fyzika a Těžiště:** Loď dostane váhu **2.5 tuny** a její těžiště je dynamicky zavěšeno **hluboko pod úroveň hladiny**. To zaručuje, že 20metrovou loď nepřevrátí žádná běžná síla ani chození postavy.
      - **Hráč (FirstPersonController):** Dynamicky naspawnovaný vysoko na obloze přesně nad středem lodi. Díky tomu po startu hry bezpečně dopadne na nejvyšší bod paluby (nebo střechu kajuty) a nehrozí, že by se zasekl uvnitř geometrie.
      - **Voda:** Zcela plochá hladina, připravena k brázdění, nebo i rozbouřený oceán, pokud si ho přepnete.
      - Kormidlo, truhla na sebrání a veškerá neviditelná fyzika trupu.

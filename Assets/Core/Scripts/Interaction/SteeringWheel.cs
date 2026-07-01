@@ -5,91 +5,144 @@ using SeaVibe.Boat;
 
 namespace SeaVibe.Interaction
 {
-    public class SteeringWheel : MonoBehaviour, IInteractable
+    public class SteeringWheel : MonoBehaviour
     {
-        public Transform playerStandPosition;
+        [Header("References")]
+        public Transform player;
+        public Camera playerCamera;
+        public Camera steeringCamera;
         public BoatController boatController;
         
-        [Header("Input")]
-        public InputAction steerAction = new InputAction("Steer", binding: "<Gamepad>/leftStick/x");
+        [Header("Settings")]
+        public float interactionDistance = 3f;
+        public float mouseSensitivity = 0.2f;
+        
+        private bool _isSteering = false;
+        private FirstPersonController _fpController;
+        
+        // Kamera rotace (Dron)
+        private float _xRotation = 30f; // Dron kouká dolů pod úhlem 30st
+        private float _yRotation = 0f;
+        public float droneDistance = 12f; // Vzdálenost dronu od lodi zkrácena na 12 metrů
 
-        private bool _isBeingUsed = false;
-        private GameObject _currentPlayer;
-
-        private void Awake()
+        private void Start()
         {
-            steerAction.AddCompositeBinding("1DAxis")
-                .With("Negative", "<Keyboard>/a")
-                .With("Positive", "<Keyboard>/d");
+            if (player != null)
+                _fpController = player.GetComponent<FirstPersonController>();
+                
+            if (steeringCamera != null)
+            {
+                steeringCamera.gameObject.SetActive(false);
+            }
         }
 
         private void Update()
         {
-            if (_isBeingUsed && boatController != null)
-            {
-                float steerInput = steerAction.ReadValue<float>();
-                boatController.Steer(steerInput);
-            }
-        }
+            if (player == null) return;
 
-        public string GetInteractionPrompt()
-        {
-            return _isBeingUsed ? "Stiskni E pro opuštění kormidla" : "Stiskni E pro kormidlování";
-        }
+            float dist = Vector3.Distance(transform.position, player.position);
 
-        public void OnInteract(GameObject interactor)
-        {
-            if (!_isBeingUsed)
+            if (!_isSteering)
             {
-                StartSteering(interactor);
+                if (dist <= interactionDistance)
+                {
+                    if (Keyboard.current != null && Keyboard.current.eKey.wasPressedThisFrame)
+                    {
+                        StartSteering();
+                    }
+                }
             }
             else
             {
-                StopSteering();
+                if (Keyboard.current != null && Keyboard.current.eKey.wasPressedThisFrame)
+                {
+                    StopSteering();
+                    return;
+                }
+                
+                // Rozhlížení myší během kormidlování (Dron)
+                if (Mouse.current != null && steeringCamera != null && boatController != null)
+                {
+                    Vector2 lookDelta = Mouse.current.delta.ReadValue();
+                    _yRotation += lookDelta.x * mouseSensitivity;
+                    _xRotation -= lookDelta.y * mouseSensitivity;
+                    _xRotation = Mathf.Clamp(_xRotation, 5f, 85f); // Dron nepůjde pod vodu (min 5st) a nepřevrátí se
+                    
+                    // Vypočítáme pozici dronu na orbitě přímo kolem kormidla
+                    Quaternion rotation = Quaternion.Euler(_xRotation, _yRotation, 0f);
+                    
+                    Vector3 targetPivot = transform.position + Vector3.up * 2f; // Střed otáčení 2m nad kormidlem
+                    
+                    steeringCamera.transform.position = targetPivot - (rotation * Vector3.forward * droneDistance);
+                    steeringCamera.transform.rotation = rotation;
+                }
             }
         }
 
-        private void StartSteering(GameObject player)
+        private void OnGUI()
         {
-            _isBeingUsed = true;
-            _currentPlayer = player;
-
-            // Disable player movement
-            FirstPersonController fpController = player.GetComponent<FirstPersonController>();
-            if (fpController != null)
+            if (!_isSteering && player != null && Vector3.Distance(transform.position, player.position) <= interactionDistance)
             {
-                fpController.enabled = false;
+                GUIStyle style = new GUIStyle(GUI.skin.label);
+                style.fontSize = 24;
+                style.normal.textColor = Color.white;
+                GUI.Label(new Rect(20, 20, 400, 40), "Press E to steer", style);
             }
-
-            // Zafixovat hráče u kormidla
-            if (playerStandPosition != null)
+            else if (_isSteering)
             {
-                player.transform.position = playerStandPosition.position;
-                player.transform.rotation = playerStandPosition.rotation;
+                GUIStyle style = new GUIStyle(GUI.skin.label);
+                style.fontSize = 24;
+                style.normal.textColor = Color.white;
+                GUI.Label(new Rect(20, 20, 400, 40), "Press E to leave wheel", style);
             }
+        }
 
-            player.transform.SetParent(playerStandPosition);
+        private void StartSteering()
+        {
+            _isSteering = true;
+            if (_fpController != null) _fpController.enabled = false;
             
-            steerAction.Enable();
+            if (playerCamera != null) playerCamera.gameObject.SetActive(false);
+            
+            if (boatController != null) 
+            {
+                boatController.isSteering = true;
+                // Skutečná vizuální příď lodi je směr, kam ukazuje vršek kormidla (kvůli rotaci 90st v setupu)
+                Vector3 visualForward = transform.up;
+                visualForward.y = 0; // Chceme jen rotaci v rovině
+                if (visualForward.sqrMagnitude > 0.001f)
+                {
+                    _yRotation = Quaternion.LookRotation(visualForward).eulerAngles.y;
+                }
+                else
+                {
+                    _yRotation = boatController.transform.eulerAngles.y;
+                }
+            }
+            
+            if (steeringCamera != null) 
+            {
+                steeringCamera.gameObject.SetActive(true);
+                // Vynutíme okamžitou aktualizaci pozice, aby kamera neskočila na 1 frame jinam
+                Quaternion rotation = Quaternion.Euler(_xRotation, _yRotation, 0f);
+                Vector3 targetPivot = transform.position + Vector3.up * 2f; // Obíháme přímo kolem kormidla!
+                steeringCamera.transform.position = targetPivot - (rotation * Vector3.forward * droneDistance);
+                steeringCamera.transform.rotation = rotation;
+            }
+            
+            Cursor.lockState = CursorLockMode.Locked;
+            Cursor.visible = false;
         }
 
         private void StopSteering()
         {
-            if (_currentPlayer == null) return;
-
-            _isBeingUsed = false;
-
-            // Znovu umožnit hráči pohyb
-            FirstPersonController fpController = _currentPlayer.GetComponent<FirstPersonController>();
-            if (fpController != null)
-            {
-                fpController.enabled = true;
-            }
-
-            _currentPlayer.transform.SetParent(transform.root);
-            _currentPlayer = null;
+            _isSteering = false;
+            if (_fpController != null) _fpController.enabled = true;
             
-            steerAction.Disable();
+            if (playerCamera != null) playerCamera.gameObject.SetActive(true);
+            if (steeringCamera != null) steeringCamera.gameObject.SetActive(false);
+            
+            if (boatController != null) boatController.isSteering = false;
         }
     }
 }

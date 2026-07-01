@@ -1,0 +1,27 @@
+Unity Editor version:    6000.5.0f1 (88b47c5e7076)
+Branch:                  6000.5/staging
+Build type:              Release
+Batch mode:              YES
+macOS version:           Version 26.5.1 (Build 25F80)
+Darwin version:          25.5.0
+Architecture:            arm64
+Running under Rosetta:   NO
+Available memory:        16384 MB
+Date:                    2026-06-27T19:12:44Z
+[Licensing::Module] Trying to connect to existing licensing client channel...
+[Licensing::IpcConnector] Successfully connected to: "LicenseClient-davis" at "2026-06-27T19:12:44.520784Z"
+Launching external process: /Applications/Unity/Hub/Editor/6000.5.0f1/Unity.app/Contents/Helpers/PackageManager/Server/UnityPackageManager
+
+COMMAND LINE ARGUMENTS:
+/Applications/Unity/Hub/Editor/6000.5.0f1/Unity.app/Contents/MacOS/Unity
+-batchmode
+-quit
+-projectPath
+/Users/davis/WebstormProjects/SeaVibe
+-executeMethod
+UnityEditor.SyncVS.SyncSolution
+-logFile
+build_log.txt
+Successfully changed project path to: /Users/davis/WebstormProjects/SeaVibe
+/Users/davis/WebstormProjects/SeaVibe
+[Package Manager] Server process was shutdown
